@@ -10,10 +10,23 @@ class Settings(BaseSettings):
     # Redis / Celery
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Security
-    SECRET_KEY: str = "change_me_in_production"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # OIDC / Keycloak
+    # Internal URL used by the backend container to fetch JWKS (Docker-internal)
+    KEYCLOAK_INTERNAL_URL: str = "http://localhost:8081"
+    KEYCLOAK_REALM: str = "rental"
+    # Whether to strictly verify the 'iss' claim in access tokens.
+    # Set to False when the public Keycloak URL (used in token iss) differs from
+    # the internal Docker URL (used to fetch JWKS) – typical in development.
+    KEYCLOAK_VERIFY_ISS: bool = False
+
+    @property
+    def keycloak_jwks_url(self) -> str:
+        return f"{self.KEYCLOAK_INTERNAL_URL}/realms/{self.KEYCLOAK_REALM}/protocol/openid-connect/certs"
+
+    @property
+    def keycloak_issuer_suffix(self) -> str:
+        """Expected suffix of the 'iss' claim: /realms/<realm>"""
+        return f"/realms/{self.KEYCLOAK_REALM}"
 
     # Application
     ENVIRONMENT: str = "development"

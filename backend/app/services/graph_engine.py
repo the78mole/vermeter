@@ -11,7 +11,10 @@ Uses NetworkX to perform topological sort and execute the DAG.
 
 from __future__ import annotations
 
+import ast
 import logging
+import operator
+import math
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -28,6 +31,95 @@ logger = logging.getLogger(__name__)
 
 class GraphExecutionError(Exception):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Safe math expression evaluator (no eval / exec)
+# ---------------------------------------------------------------------------
+
+# Allowed AST node types – only basic arithmetic, no attribute access, no calls
+_ALLOWED_AST_NODES = (
+    ast.Expression,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Constant,
+    ast.Name,
+    # Operators
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+    ast.UAdd, ast.USub,
+)
+
+_BINARY_OPS: dict[type, Any] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+
+_UNARY_OPS: dict[type, Any] = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+_MAX_POW_EXPONENT = 100  # Guard against expensive pow like 2**1000000
+
+
+def _safe_eval(node: ast.AST, namespace: dict[str, float]) -> float:
+    """Recursively evaluate a pre-parsed AST using only whitelisted node types."""
+    if not isinstance(node, _ALLOWED_AST_NODES):
+        raise GraphExecutionError(f"Disallowed expression node: {type(node).__name__}")
+
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body, namespace)
+
+    if isinstance(node, ast.Constant):
+        if not isinstance(node.value, (int, float)):
+            raise GraphExecutionError("Only numeric literals are allowed in formulas")
+        return float(node.value)
+
+    if isinstance(node, ast.Name):
+        name = node.id
+        if name not in namespace:
+            raise GraphExecutionError(f"Unknown variable in formula: '{name}'")
+        return float(namespace[name])
+
+    if isinstance(node, ast.BinOp):
+        op_type = type(node.op)
+        if op_type not in _BINARY_OPS:
+            raise GraphExecutionError(f"Unsupported operator: {op_type.__name__}")
+        left = _safe_eval(node.left, namespace)
+        right = _safe_eval(node.right, namespace)
+        # Guard: prevent runaway exponentiation
+        if op_type is ast.Pow and abs(right) > _MAX_POW_EXPONENT:
+            raise GraphExecutionError(f"Exponent {right} exceeds maximum allowed value of {_MAX_POW_EXPONENT}")
+        return _BINARY_OPS[op_type](left, right)
+
+    if isinstance(node, ast.UnaryOp):
+        op_type = type(node.op)
+        if op_type not in _UNARY_OPS:
+            raise GraphExecutionError(f"Unsupported unary operator: {op_type.__name__}")
+        operand = _safe_eval(node.operand, namespace)
+        return _UNARY_OPS[op_type](operand)
+
+    raise GraphExecutionError(f"Unhandled AST node type: {type(node).__name__}")
+
+
+def safe_math_eval(formula: str, namespace: dict[str, float]) -> float:
+    """
+    Parse and evaluate a simple arithmetic formula without using eval().
+
+    Supports: +, -, *, /, //, %, ** and named variables from namespace.
+    Raises GraphExecutionError on any disallowed construct or parse error.
+    """
+    try:
+        tree = ast.parse(formula.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise GraphExecutionError(f"Formula syntax error: {exc}") from exc
+
+    return _safe_eval(tree, namespace)
 
 
 class GraphEngine:
@@ -154,16 +246,18 @@ class GraphEngine:
         formula: str = data.get("formula", "inputA + inputB")
         factor: float = float(data.get("factor", 1.0))
 
-        # Build a safe evaluation namespace
-        safe_ns: dict[str, Any] = {k: float(v) for k, v in inputs.items()}
+        # Build a safe evaluation namespace from inputs
+        safe_ns: dict[str, float] = {k: float(v) for k, v in inputs.items()}
         # Also allow positional inputA, inputB from ordered inputs
         input_list = list(inputs.values())
         safe_ns.setdefault("inputA", input_list[0] if len(input_list) > 0 else 0.0)
         safe_ns.setdefault("inputB", input_list[1] if len(input_list) > 1 else 0.0)
 
-        # Evaluate with restricted builtins
+        # Use the safe AST-based evaluator instead of eval()
         try:
-            result = float(eval(formula, {"__builtins__": {}}, safe_ns)) * factor  # noqa: S307
+            result = safe_math_eval(formula, safe_ns) * factor
+        except GraphExecutionError:
+            raise
         except Exception as exc:
             raise GraphExecutionError(f"Formula evaluation failed: {exc}") from exc
 

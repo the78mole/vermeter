@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.models import (
     ContractStatus,
@@ -26,36 +25,8 @@ class OrmModel(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Auth
+# User  (read-only – management happens in Keycloak)
 # ---------------------------------------------------------------------------
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class TokenData(BaseModel):
-    user_id: str
-
-
-# ---------------------------------------------------------------------------
-# User
-# ---------------------------------------------------------------------------
-
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    full_name: str
-    password: str
-    role: UserRole = UserRole.TENANT
-
-
-class UserUpdate(BaseModel):
-    full_name: str | None = None
-    email: EmailStr | None = None
-    password: str | None = None
-    is_active: bool | None = None
 
 
 class UserRead(OrmModel):

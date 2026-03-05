@@ -1,24 +1,35 @@
+/**
+ * Axios API client.
+ *
+ * The Bearer token comes from oidc-client-ts (Keycloak).
+ * We obtain it through the UserManager so this module stays framework-agnostic
+ * and can be used outside of React components (e.g. Zustand actions).
+ */
 import axios from 'axios'
-import { useAuthStore } from '../store/authStore'
+import { UserManager } from 'oidc-client-ts'
+import { oidcConfig } from '../oidc'
+
+// Singleton UserManager – shared with AuthProvider in main.jsx
+export const userManager = new UserManager(oidcConfig)
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
 })
 
-api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+api.interceptors.request.use(async (config) => {
+  const user = await userManager.getUser()
+  if (user?.access_token) {
+    config.headers.Authorization = `Bearer ${user.access_token}`
   }
   return config
 })
 
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
+  async (err) => {
     if (err.response?.status === 401) {
-      useAuthStore.getState().logout()
-      window.location.href = '/login'
+      // Token is invalid / expired – trigger a new login
+      await userManager.signinRedirect()
     }
     return Promise.reject(err)
   }
@@ -27,13 +38,6 @@ api.interceptors.response.use(
 export default api
 
 // --- Auth ---
-export const login = (email, password) => {
-  const form = new URLSearchParams()
-  form.append('username', email)
-  form.append('password', password)
-  return api.post('/auth/login', form)
-}
-export const register = (data) => api.post('/auth/register', data)
 export const getMe = () => api.get('/auth/me')
 
 // --- Landlord ---

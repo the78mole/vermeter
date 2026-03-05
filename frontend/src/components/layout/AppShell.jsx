@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../../store/authStore'
+import { NavLink } from 'react-router-dom'
+import { useAuth } from 'react-oidc-context'
+import { useUserStore } from '../../store/authStore'
 import { Home, FileText, Zap, BarChart2, LogOut, Building2, Users } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
@@ -7,6 +8,7 @@ function NavItem({ to, icon: Icon, label }) {
   return (
     <NavLink
       to={to}
+      end
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
@@ -23,15 +25,15 @@ function NavItem({ to, icon: Icon, label }) {
 }
 
 export function AppShell({ children }) {
-  const { user, logout } = useAuthStore()
-  const navigate = useNavigate()
+  const { profile } = useUserStore()
+  const auth = useAuth()
 
   const handleLogout = () => {
-    logout()
-    navigate('/login')
+    auth.removeUser()
+    auth.signoutRedirect()
   }
 
-  const isLandlord = user?.role === 'LANDLORD' || user?.role === 'ADMIN'
+  const isLandlord = profile?.role === 'LANDLORD' || profile?.role === 'ADMIN'
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -42,7 +44,7 @@ export function AppShell({ children }) {
             <Building2 className="h-6 w-6 text-blue-600" />
             <span className="font-bold text-gray-900 text-lg">RentalManager</span>
           </div>
-          <p className="text-xs text-gray-500 mt-1 truncate">{user?.email}</p>
+          <p className="text-xs text-gray-500 mt-1 truncate">{profile?.email}</p>
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
