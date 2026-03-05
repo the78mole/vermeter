@@ -1,0 +1,135 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - proxy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rental}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rental_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-rental_manager}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rental}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rental}:${POSTGRES_PASSWORD:-rental_secret}@db:5432/${POSTGRES_DB:-rental_manager}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_please}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+    networks:
+      - proxy
+      - backend
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app worker --loglevel=info -Q default,billing
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rental}:${POSTGRES_PASSWORD:-rental_secret}@db:5432/${POSTGRES_DB:-rental_manager}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_please}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rental}:${POSTGRES_PASSWORD:-rental_secret}@db:5432/${POSTGRES_DB:-rental_manager}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_please}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost/api/v1}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`localhost`)"
+      - "traefik.http.services.web.loadbalancer.server.port=80"
+    networks:
+      - proxy
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+
+networks:
+  proxy:
+    driver: bridge
+  backend:
+    driver: bridge
