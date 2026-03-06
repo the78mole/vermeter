@@ -12,18 +12,21 @@
   "resetPasswordAllowed": true,
   "duplicateEmailsAllowed": false,
   "internationalizationEnabled": true,
-  "supportedLocales": ["de", "en"],
+  "supportedLocales": [
+    "de",
+    "en"
+  ],
   "defaultLocale": "de",
   "roles": {
     "realm": [
       {
         "name": "landlord",
-        "description": "Vermieter – vollständige Verwaltung",
+        "description": "Vermieter \u2013 vollst\u00e4ndige Verwaltung",
         "composite": false
       },
       {
         "name": "tenant",
-        "description": "Mieter – Lesezugriff auf eigene Daten",
+        "description": "Mieter \u2013 Lesezugriff auf eigene Daten",
         "composite": false
       }
     ]
@@ -43,9 +46,12 @@
       "redirectUris": [
         "http://localhost/*",
         "http://localhost:3000/*",
-        "http://localhost:5173/*"
+        "http://localhost:5173/*",
+        "http://localhost:*/*"
       ],
-      "webOrigins": ["*"],
+      "webOrigins": [
+        "*"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "access.token.lifespan": "900",
@@ -171,7 +177,7 @@
   ],
   "users": [
     {
-      "_comment": "DEVELOPMENT ONLY – change or delete these credentials before going to production",
+      "_comment": "DEVELOPMENT ONLY \u2013 change or delete these credentials before going to production",
       "username": "demo-landlord",
       "email": "landlord@example.com",
       "firstName": "Demo",
@@ -185,7 +191,9 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["landlord"]
+      "realmRoles": [
+        "landlord"
+      ]
     },
     {
       "username": "demo-tenant",
@@ -201,7 +209,9 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["tenant"]
+      "realmRoles": [
+        "tenant"
+      ]
     }
   ]
 }

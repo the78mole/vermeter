@@ -1,0 +1,94 @@
+{
+  // ────────────────────────────────────────────────────────────────────────────
+  // Rental Manager – Dev Container
+  //
+  // Works for both:
+  //   • Local VS Code (Dev Containers extension)
+  //   • GitHub Codespaces
+  //
+  // Architecture inside the container:
+  //   • Infrastructure (Postgres, Redis, Keycloak) runs via Docker-in-Docker.
+  //   • FastAPI backend  → uvicorn --reload on port 8000 (hot-reload ✓)
+  //   • React frontend   → Vite dev server  on port 3000 (hot-reload ✓)
+  //
+  // Codespaces specifics:
+  //   • Port 8081 (Keycloak) is marked PUBLIC so the browser can follow the
+  //     OIDC redirect without hitting Codespaces' auth wall.
+  //   • postStart.sh detects $CODESPACE_NAME and patches the Keycloak client's
+  //     redirect URIs via the Admin REST API.
+  // ────────────────────────────────────────────────────────────────────────────
+  "name": "Rental Manager",
+
+  // Use the Microsoft "universal" image – ships Python 3.12, Node 22, git, etc.
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+
+  // Docker-in-Docker lets us run docker compose for infrastructure services.
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+
+  // ── Port forwarding ─────────────────────────────────────────────────────────
+  "forwardPorts": [3000, 8000, 8081],
+
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend (Vite dev server)",
+      "onAutoForward": "openBrowserOnce"
+    },
+    "8000": {
+      "label": "API (FastAPI / uvicorn)",
+      "onAutoForward": "notify"
+    },
+    "8081": {
+      // Keycloak MUST be public so the browser can complete the OIDC redirect
+      // without being blocked by Codespaces' port-auth wall.
+      "label": "Keycloak Admin UI",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  },
+
+  // ── Lifecycle scripts ────────────────────────────────────────────────────────
+  // postCreateCommand runs once after the container is first created.
+  "postCreateCommand": "bash .devcontainer/scripts/postCreate.sh",
+
+  // postStartCommand runs every time the container starts (incl. Codespace resume).
+  "postStartCommand": "bash .devcontainer/scripts/postStart.sh",
+
+  // ── VS Code / Codespaces customisations ──────────────────────────────────────
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        // Frontend
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        // Docker / DB
+        "ms-azuretools.vscode-docker",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        // REST testing
+        "humao.rest-client"
+      ],
+      "settings": {
+        // Point VS Code to the backend virtual-env created in postCreate.sh
+        "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python"
+        },
+        "[javascript][javascriptreact][typescript][typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+}
