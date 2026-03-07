@@ -17,12 +17,15 @@ const TenantDashboard     = lazy(() => import('./pages/tenant/TenantDashboard'))
 const TenantContractsPage = lazy(() => import('./pages/tenant/TenantContractsPage'))
 const TenantBillsPage     = lazy(() => import('./pages/tenant/TenantBillsPage'))
 const MeterReadingsPage   = lazy(() => import('./pages/tenant/MeterReadingsPage'))
+const AdminDashboard      = lazy(() => import('./pages/admin/AdminDashboard'))
+const LandlordsPage       = lazy(() => import('./pages/admin/LandlordsPage'))
+const AdminUsersPage      = lazy(() => import('./pages/admin/AdminUsersPage'))
 
 function RoleRoot() {
   const { profile } = useUserStore()
   if (!profile) return <Spinner />
-  const isLandlord = profile.role === 'LANDLORD' || profile.role === 'ADMIN'
-  return <Navigate to={isLandlord ? '/landlord' : '/tenant'} replace />
+  if (profile.role === 'ADMIN') return <Navigate to="/admin" replace />
+  return <Navigate to={profile.role === 'LANDLORD' ? '/landlord' : '/tenant'} replace />
 }
 
 export default function App() {
@@ -47,6 +50,11 @@ export default function App() {
               <Route path="/tenant/contracts" element={<TenantContractsPage />} />
               <Route path="/tenant/bills" element={<TenantBillsPage />} />
               <Route path="/tenant/meter-readings" element={<MeterReadingsPage />} />
+
+              {/* Admin routes */}
+              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/landlords" element={<LandlordsPage />} />
+              <Route path="/admin/users" element={<AdminUsersPage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { useUserStore } from '../../store/authStore'
-import { Home, FileText, Zap, BarChart2, LogOut, Building2, Users } from 'lucide-react'
+import { Home, FileText, Zap, BarChart2, LogOut, Building2, Users, ShieldCheck, LayoutDashboard, UserCog } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 function NavItem({ to, icon: Icon, label }) {
@@ -33,7 +33,10 @@ export function AppShell({ children }) {
     auth.signoutRedirect()
   }
 
-  const isLandlord = profile?.role === 'LANDLORD' || profile?.role === 'ADMIN'
+  const isLandlord = profile?.role === 'LANDLORD'
+  const isAdmin = profile?.role === 'ADMIN'
+  const isOperator = isAdmin && profile?.admin_role === 'OPERATOR'
+  const isAdminManager = isAdmin && (profile?.admin_role === 'ADMIN' || profile?.admin_role === 'SUPER_ADMIN')
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -45,10 +48,24 @@ export function AppShell({ children }) {
             <span className="font-bold text-gray-900 text-lg">RentalManager</span>
           </div>
           <p className="text-xs text-gray-500 mt-1 truncate">{profile?.email}</p>
+          {isAdmin && (
+            <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs font-medium">
+              <ShieldCheck className="h-3 w-3" />
+              {profile?.admin_role === 'SUPER_ADMIN' ? 'Super-Admin' : profile?.admin_role === 'ADMIN' ? 'Admin' : 'Operator'}
+            </span>
+          )}
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {isLandlord ? (
+          {isAdmin ? (
+            <>
+              <NavItem to="/admin" icon={LayoutDashboard} label="Übersicht" />
+              <NavItem to="/admin/landlords" icon={Building2} label="Vermieter (Mandanten)" />
+              {isAdminManager && (
+                <NavItem to="/admin/users" icon={UserCog} label="Admin-Benutzer" />
+              )}
+            </>
+          ) : isLandlord ? (
             <>
               <NavItem to="/landlord" icon={Home} label="Übersicht" />
               <NavItem to="/landlord/properties" icon={Building2} label="Immobilien" />

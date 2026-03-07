@@ -21,7 +21,7 @@ from app.models.models import (
 
 
 class OrmModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 # ---------------------------------------------------------------------------
@@ -34,8 +34,129 @@ class UserRead(OrmModel):
     email: str
     full_name: str
     role: UserRole
+    admin_role: AdminRole | None = None
     is_active: bool
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Admin-User management
+# ---------------------------------------------------------------------------
+
+
+class AdminUserCreate(BaseModel):
+    email: str
+    full_name: str
+    admin_role: AdminRole
+
+
+class AdminUserUpdate(BaseModel):
+    full_name: str | None = None
+    admin_role: AdminRole | None = None
+    is_active: bool | None = None
+
+
+class AdminUserProvisionResponse(UserRead):
+    keycloak_created: bool = False
+    temp_password: str | None = None
+
+
+class LandlordCreate(BaseModel):
+    email: str
+    full_name: str
+
+
+class LandlordUpdate(BaseModel):
+    full_name: str | None = None
+    is_active: bool | None = None
+
+
+class LandlordProvisionResponse(UserRead):
+    """Response payload for POST /admin/landlords.
+
+    Extends :class:`UserRead` with the one-time temporary password that was
+    set in Keycloak.  The password is only returned once and never stored.
+    """
+
+    keycloak_created: bool = False
+    temp_password: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# LandlordProfile
+# ---------------------------------------------------------------------------
+
+
+class LandlordProfileRead(OrmModel):
+    id: str
+    user_id: str
+    phone: str | None = None
+    website: str | None = None
+    company_name: str | None = None
+    address_street: str | None = None
+    address_city: str | None = None
+    address_zip: str | None = None
+    address_country: str | None = None
+    tax_id: str | None = None
+    vat_id: str | None = None
+    iban: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LandlordProfileUpsert(BaseModel):
+    """Used for both create and update (PUT semantics – missing fields stay None)."""
+
+    phone: str | None = None
+    website: str | None = None
+    company_name: str | None = None
+    address_street: str | None = None
+    address_city: str | None = None
+    address_zip: str | None = None
+    address_country: str | None = None
+    tax_id: str | None = None
+    vat_id: str | None = None
+    iban: str | None = None
+    notes: str | None = None
+
+
+class LandlordWithProfile(UserRead):
+    """UserRead + optional LandlordProfile – used in admin landlord list/detail."""
+
+    # The ORM relationship is named 'landlord_profile'; alias it to 'profile' for the API.
+    profile: LandlordProfileRead | None = Field(None, validation_alias="landlord_profile")
+
+
+# ---------------------------------------------------------------------------
+# Tag
+# ---------------------------------------------------------------------------
+
+
+class TagRead(OrmModel):
+    id: int
+    name: str
+
+
+# ---------------------------------------------------------------------------
+# LandlordDocument
+# ---------------------------------------------------------------------------
+
+
+class LandlordDocumentRead(OrmModel):
+    id: str
+    landlord_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    description: str | None = None
+    tags: list[TagRead] = []
+    uploaded_at: datetime
+
+
+class LandlordDocumentUpdate(BaseModel):
+    tags: list[str] = []
+    description: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 #
 # Steps:
 #   1. Copy .env.example → .env  (skip if .env already exists)
-#   2. Create a Python virtual-env for the backend and install requirements.
+#   2. Create a Python virtual-env for the backend with uv and install deps.
 #   3. Install frontend npm dependencies.
 #   4. Pre-pull Docker images so the first postStart.sh is faster.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -27,18 +27,13 @@ else
   echo "ℹ️   .env already exists – skipping copy"
 fi
 
-# ── 2. Python virtual-env ─────────────────────────────────────────────────────
+# ── 2. Python virtual-env mit uv ─────────────────────────────────────────────
 echo ""
-echo "🐍  Setting up Python virtual-env (backend/.venv)…"
+echo "🐍  Setting up Python virtual-env (backend/.venv) with uv…"
 
-python3 -m venv backend/.venv
+(cd backend && uv sync)
 
-# Upgrade pip silently
-backend/.venv/bin/pip install --quiet --upgrade pip
-
-backend/.venv/bin/pip install --quiet -r backend/requirements.txt
-
-echo "✅  Python dependencies installed"
+echo "✅  Python dependencies installed via uv"
 
 # ── 3. Node.js / npm ─────────────────────────────────────────────────────────
 echo ""
@@ -46,15 +41,15 @@ echo "📦  Installing frontend npm packages…"
 (cd frontend && npm ci --prefer-offline 2>&1 | tail -3)
 echo "✅  npm packages installed"
 
-# ── 4. Pre-pull Docker images ─────────────────────────────────────────────────
 echo ""
-echo "🐳  Pre-pulling infrastructure Docker images…"
-docker compose \
-  -f .devcontainer/docker-compose.devcontainer.yml \
-  pull --quiet
-echo "✅  Docker images pulled"
-
+echo "🎉  postCreate complete."
 echo ""
-echo "🎉  postCreate complete.  The stack will start automatically."
-echo "    Run 'bash .devcontainer/scripts/postStart.sh' to restart services."
+echo "To start the full stack, run:"
+echo "    docker compose up -d"
+echo ""
+echo "To start the backend with hot-reload instead (after infra is up):"
+echo "    cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+echo ""
+echo "To start the frontend dev server instead:"
+echo "    cd frontend && npm run dev"
 echo ""
