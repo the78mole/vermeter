@@ -14,6 +14,7 @@ from sqlalchemy import (
     JSON,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
@@ -32,6 +33,13 @@ class UserRole(str, enum.Enum):
     LANDLORD = "LANDLORD"
     TENANT = "TENANT"
     ADMIN = "ADMIN"
+    CARETAKER = "CARETAKER"
+
+
+class AdminRole(str, enum.Enum):
+    SUPER_ADMIN = "SUPER_ADMIN"
+    ADMIN = "ADMIN"
+    OPERATOR = "OPERATOR"
 
 
 class HeatingType(str, enum.Enum):
@@ -73,6 +81,7 @@ class MeterType(str, enum.Enum):
     OIL = "OIL"
 
 
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -99,6 +108,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.TENANT)
+    admin_role = Column(Enum(AdminRole), nullable=True)  # only for UserRole.ADMIN
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
@@ -107,6 +117,103 @@ class User(Base):
     owned_properties = relationship("Property", back_populates="landlord", cascade="all, delete-orphan")
     contracts = relationship("Contract", back_populates="tenant", foreign_keys="Contract.tenant_id")
     meter_readings = relationship("MeterReading", back_populates="uploaded_by")
+    landlord_profile = relationship("LandlordProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    landlord_documents = relationship("LandlordDocument", back_populates="landlord", cascade="all, delete-orphan")
+    caretaker_building_assignments = relationship(
+        "CaretakerBuildingAssignment",
+        back_populates="caretaker",
+        cascade="all, delete-orphan",
+    )
+    caretaker_apartment_assignments = relationship(
+        "CaretakerApartmentAssignment",
+        back_populates="caretaker",
+        cascade="all, delete-orphan",
+    )
+
+
+# ---------------------------------------------------------------------------
+# LandlordProfile (Mandanten-Details)
+# ---------------------------------------------------------------------------
+
+
+class LandlordProfile(Base):
+    __tablename__ = "landlord_profiles"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+
+    # Kontakt
+    phone = Column(String(50), nullable=True)
+    website = Column(String(255), nullable=True)
+
+    # Anschrift (kann von Keycloak-E-Mail abweichen)
+    company_name = Column(String(255), nullable=True)
+    address_street = Column(String(255), nullable=True)
+    address_city = Column(String(255), nullable=True)
+    address_zip = Column(String(20), nullable=True)
+    address_country = Column(String(100), nullable=True, default="Deutschland")
+
+    # Steuer / Recht
+    tax_id = Column(String(50), nullable=True)     # Steuernummer
+    vat_id = Column(String(50), nullable=True)     # USt-IdNr.
+    iban = Column(String(34), nullable=True)
+
+    # Interne Notizen (nur für Platform-Admin sichtbar)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+    user = relationship("User", back_populates="landlord_profile")
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tags (freie Schlagwörter, mehrere pro Dokument)
+# ---------------------------------------------------------------------------
+
+# Assoziationstabelle für die n:m-Beziehung Dokument ↔ Tag
+_document_tags = Table(
+    "document_tags",
+    Base.metadata,
+    Column("document_id", UUID(as_uuid=False), ForeignKey("landlord_documents.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+
+    documents = relationship("LandlordDocument", secondary=_document_tags, back_populates="tags")
+
+
+# ---------------------------------------------------------------------------
+# LandlordDocument (Dokumente für Mandanten, gespeichert in S3)
+# ---------------------------------------------------------------------------
+
+
+class LandlordDocument(Base):
+    __tablename__ = "landlord_documents"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    landlord_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Dateiinfos
+    filename = Column(String(255), nullable=False)          # Original-Dateiname
+    content_type = Column(String(128), nullable=False)      # MIME-Typ
+    size_bytes = Column(Integer, nullable=False)            # Dateigröße
+    description = Column(String(512), nullable=True)        # Optionale Beschreibung
+
+    # S3-Speicherort
+    s3_key = Column(String(1024), nullable=False)           # Objektkey im Bucket
+
+    uploaded_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+    landlord = relationship("User", back_populates="landlord_documents")
+    tags = relationship("Tag", secondary=_document_tags, back_populates="documents", lazy="selectin")
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +236,11 @@ class Property(Base):
 
     landlord = relationship("User", back_populates="owned_properties")
     units = relationship("Unit", back_populates="property", cascade="all, delete-orphan")
+    caretaker_assignments = relationship(
+        "CaretakerBuildingAssignment",
+        back_populates="building",
+        cascade="all, delete-orphan",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +265,37 @@ class Unit(Base):
     property = relationship("Property", back_populates="units")
     contracts = relationship("Contract", back_populates="unit")
     meters = relationship("Meter", back_populates="unit", cascade="all, delete-orphan")
+    caretaker_assignments = relationship(
+        "CaretakerApartmentAssignment",
+        back_populates="apartment",
+        cascade="all, delete-orphan",
+    )
+
+
+class CaretakerBuildingAssignment(Base):
+    __tablename__ = "caretaker_building_assignments"
+    __table_args__ = (UniqueConstraint("caretaker_id", "building_id"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    caretaker_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    building_id = Column(UUID(as_uuid=False), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+    caretaker = relationship("User", back_populates="caretaker_building_assignments")
+    building = relationship("Property", back_populates="caretaker_assignments")
+
+
+class CaretakerApartmentAssignment(Base):
+    __tablename__ = "caretaker_apartment_assignments"
+    __table_args__ = (UniqueConstraint("caretaker_id", "apartment_id"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    caretaker_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    apartment_id = Column(UUID(as_uuid=False), ForeignKey("units.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+    caretaker = relationship("User", back_populates="caretaker_apartment_assignments")
+    apartment = relationship("Unit", back_populates="caretaker_assignments")
 
 
 # ---------------------------------------------------------------------------

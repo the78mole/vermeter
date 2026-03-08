@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.oidc import OIDCError, extract_user_info, validate_token
-from app.models.models import User, UserRole
+from app.models.models import AdminRole, User, UserRole
 
 # Use HTTPBearer so the scheme name is "Bearer" (matches Keycloak tokens)
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -46,6 +46,12 @@ async def get_current_user(
 
     info = extract_user_info(claims)
     keycloak_sub: str = info["sub"]
+    if not keycloak_sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token claims: missing subject",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Look up by Keycloak sub (stored in User.id)
     result = await db.execute(select(User).where(User.id == keycloak_sub))
@@ -91,7 +97,34 @@ async def require_landlord(current_user: User = Depends(get_current_user)) -> Us
     return current_user
 
 
+async def require_landlord_or_caretaker(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in (UserRole.LANDLORD, UserRole.CARETAKER, UserRole.ADMIN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Landlord or caretaker access required")
+    return current_user
+
+
 async def require_tenant(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role not in (UserRole.TENANT, UserRole.ADMIN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant access required")
+    return current_user
+
+
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Grants access to all admin sub-roles (SUPER_ADMIN, ADMIN, OPERATOR)."""
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
+
+
+async def require_admin_manager(current_user: User = Depends(get_current_user)) -> User:
+    """Grants access to ADMIN and SUPER_ADMIN (can manage operators)."""
+    if current_user.role != UserRole.ADMIN or current_user.admin_role not in (AdminRole.ADMIN, AdminRole.SUPER_ADMIN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or Super-Admin access required")
+    return current_user
+
+
+async def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Grants access to SUPER_ADMIN only."""
+    if current_user.role != UserRole.ADMIN or current_user.admin_role != AdminRole.SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super-Admin access required")
     return current_user

@@ -1,28 +1,63 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthGate } from './components/layout/AuthGate'
-import { AppShell } from './components/layout/AppShell'
-import { useUserStore } from './store/authStore'
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthGate } from "./components/layout/AuthGate";
+import { AppShell } from "./components/layout/AppShell";
+import { useUserStore } from "./store/authStore";
 
 // Lazy-load pages
-import { lazy, Suspense } from 'react'
-import { Spinner } from './components/ui'
+import { lazy, Suspense } from "react";
+import { Spinner } from "./components/ui";
 
-const LandlordDashboard   = lazy(() => import('./pages/landlord/LandlordDashboard'))
-const PropertiesPage      = lazy(() => import('./pages/landlord/PropertiesPage'))
-const ContractsPage       = lazy(() => import('./pages/landlord/ContractsPage'))
-const BillsPage           = lazy(() => import('./pages/landlord/BillsPage'))
-const TenantsPage         = lazy(() => import('./pages/landlord/TenantsPage'))
-const BillingGraphPage    = lazy(() => import('./pages/landlord/BillingGraphPage'))
-const TenantDashboard     = lazy(() => import('./pages/tenant/TenantDashboard'))
-const TenantContractsPage = lazy(() => import('./pages/tenant/TenantContractsPage'))
-const TenantBillsPage     = lazy(() => import('./pages/tenant/TenantBillsPage'))
-const MeterReadingsPage   = lazy(() => import('./pages/tenant/MeterReadingsPage'))
+const LandlordDashboard = lazy(
+  () => import("./pages/landlord/LandlordDashboard"),
+);
+const PropertiesPage = lazy(() => import("./pages/landlord/PropertiesPage"));
+const ContractsPage = lazy(() => import("./pages/landlord/ContractsPage"));
+const BillsPage = lazy(() => import("./pages/landlord/BillsPage"));
+const TenantsPage = lazy(() => import("./pages/landlord/TenantsPage"));
+const BillingGraphPage = lazy(
+  () => import("./pages/landlord/BillingGraphPage"),
+);
+const TenantDashboard = lazy(() => import("./pages/tenant/TenantDashboard"));
+const TenantContractsPage = lazy(
+  () => import("./pages/tenant/TenantContractsPage"),
+);
+const TenantBillsPage = lazy(() => import("./pages/tenant/TenantBillsPage"));
+const MeterReadingsPage = lazy(
+  () => import("./pages/tenant/MeterReadingsPage"),
+);
+const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
+const LandlordsPage = lazy(() => import("./pages/admin/LandlordsPage"));
+const AdminUsersPage = lazy(() => import("./pages/admin/AdminUsersPage"));
 
 function RoleRoot() {
-  const { profile } = useUserStore()
-  if (!profile) return <Spinner />
-  const isLandlord = profile.role === 'LANDLORD' || profile.role === 'ADMIN'
-  return <Navigate to={isLandlord ? '/landlord' : '/tenant'} replace />
+  const { profile } = useUserStore();
+  if (!profile) return <Spinner />;
+  if (profile.role === "ADMIN") {
+    if (profile.admin_role === "OPERATOR")
+      return <Navigate to="/admin/landlords" replace />;
+    return <Navigate to="/admin" replace />;
+  }
+  if (profile.role === "CARETAKER") {
+    return <Navigate to="/landlord" replace />;
+  }
+  return (
+    <Navigate
+      to={profile.role === "LANDLORD" ? "/landlord" : "/tenant"}
+      replace
+    />
+  );
+}
+
+function AdminUsersRouteGate() {
+  const { profile } = useUserStore();
+  const isManager =
+    profile?.role === "ADMIN" &&
+    (profile?.admin_role === "ADMIN" || profile?.admin_role === "SUPER_ADMIN");
+  return isManager ? (
+    <AdminUsersPage />
+  ) : (
+    <Navigate to="/admin/landlords" replace />
+  );
 }
 
 export default function App() {
@@ -40,13 +75,27 @@ export default function App() {
               <Route path="/landlord/contracts" element={<ContractsPage />} />
               <Route path="/landlord/bills" element={<BillsPage />} />
               <Route path="/landlord/tenants" element={<TenantsPage />} />
-              <Route path="/landlord/billing-graph" element={<BillingGraphPage />} />
+              <Route
+                path="/landlord/billing-graph"
+                element={<BillingGraphPage />}
+              />
 
               {/* Tenant routes */}
               <Route path="/tenant" element={<TenantDashboard />} />
-              <Route path="/tenant/contracts" element={<TenantContractsPage />} />
+              <Route
+                path="/tenant/contracts"
+                element={<TenantContractsPage />}
+              />
               <Route path="/tenant/bills" element={<TenantBillsPage />} />
-              <Route path="/tenant/meter-readings" element={<MeterReadingsPage />} />
+              <Route
+                path="/tenant/meter-readings"
+                element={<MeterReadingsPage />}
+              />
+
+              {/* Admin routes */}
+              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/landlords" element={<LandlordsPage />} />
+              <Route path="/admin/users" element={<AdminUsersRouteGate />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -54,5 +103,5 @@ export default function App() {
         </AppShell>
       </AuthGate>
     </BrowserRouter>
-  )
+  );
 }

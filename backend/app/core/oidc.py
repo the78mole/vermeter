@@ -132,9 +132,13 @@ def extract_user_info(claims: dict[str, Any]) -> dict[str, str]:
 
     realm_roles: list[str] = claims.get("realm_access", {}).get("roles", [])
 
-    # Precedence: landlord > tenant (admin could have both)
-    if "landlord" in realm_roles:
+    # Precedence: admin > landlord > tenant
+    if "admin" in realm_roles:
+        role = "ADMIN"
+    elif "landlord" in realm_roles:
         role = "LANDLORD"
+    elif "caretaker" in realm_roles:
+        role = "CARETAKER"
     elif "tenant" in realm_roles:
         role = "TENANT"
     else:

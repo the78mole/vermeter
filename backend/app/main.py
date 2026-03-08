@@ -10,9 +10,13 @@ from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.database import engine
 from app.models.models import (  # noqa: F401 - ensure all models are imported before create_all
+    CaretakerApartmentAssignment,
+    CaretakerBuildingAssignment,
     BillLineItem,
     Contract,
     InterpolatedReading,
+    LandlordDocument,
+    LandlordProfile,
     Meter,
     MeterReading,
     Property,
@@ -30,6 +34,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    # Ensure S3 bucket exists
+    try:
+        from app.services.storage import ensure_bucket
+        await ensure_bucket()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("S3 bucket setup failed (non-fatal): %s", exc)
     yield
 
 

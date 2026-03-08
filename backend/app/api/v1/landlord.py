@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db, require_landlord
+from app.api.deps import get_db, require_landlord, require_landlord_or_caretaker
 from app.models.models import (
+    CaretakerApartmentAssignment,
+    CaretakerBuildingAssignment,
     Contract,
     ContractStatus,
     Meter,
@@ -17,10 +19,18 @@ from app.models.models import (
     Property,
     Unit,
     User,
+    UserRole,
     UtilityBill,
     UtilityBillStatus,
 )
 from app.models.schemas import (
+    ApartmentCreate,
+    ApartmentRead,
+    ApartmentUpdate,
+    BuildingCreate,
+    BuildingRead,
+    BuildingUpdate,
+    CaretakerAssignmentRead,
     ContractCreate,
     ContractRead,
     ContractStatusUpdate,
@@ -43,6 +53,156 @@ from app.models.schemas import (
 router = APIRouter(prefix="/landlord", tags=["landlord"])
 
 
+@router.get("/buildings", response_model=list[BuildingRead])
+async def list_buildings(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord_or_caretaker),
+) -> list[Property]:
+    result = await db.execute(_property_visibility_stmt(current_user))
+    return list(result.scalars().all())
+
+
+@router.post("/buildings", response_model=BuildingRead, status_code=status.HTTP_201_CREATED)
+async def create_building(
+    payload: BuildingCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord_or_caretaker),
+) -> Property:
+    _ensure_landlord_or_admin(current_user)
+    building = Property(**payload.model_dump(), landlord_id=current_user.id)
+    db.add(building)
+    await db.flush()
+    await db.refresh(building)
+    return building
+
+
+@router.patch("/buildings/{building_id}", response_model=BuildingRead)
+async def update_building(
+    building_id: str,
+    payload: BuildingUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord_or_caretaker),
+) -> Property:
+    _ensure_landlord_or_admin(current_user)
+    building = await _get_accessible_property(db, building_id, current_user)
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(building, field, value)
+    await db.flush()
+    await db.refresh(building)
+    return building
+
+
+@router.get("/buildings/{building_id}/apartments", response_model=list[ApartmentRead])
+async def list_apartments(
+    building_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord_or_caretaker),
+) -> list[Unit]:
+    await _get_accessible_property(db, building_id, current_user)
+    result = await db.execute(select(Unit).where(Unit.property_id == building_id).order_by(Unit.name))
+    return list(result.scalars().all())
+
+
+@router.post("/buildings/{building_id}/apartments", response_model=ApartmentRead, status_code=status.HTTP_201_CREATED)
+async def create_apartment(
+    building_id: str,
+    payload: ApartmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord_or_caretaker),
+) -> Unit:
+    _ensure_landlord_or_admin(current_user)
+    await _get_accessible_property(db, building_id, current_user)
+    apartment = Unit(**payload.model_dump(), property_id=building_id)
+    db.add(apartment)
+    await db.flush()
+    await db.refresh(apartment)
+    return apartment
+
+
+@router.post("/buildings/{building_id}/caretakers/{caretaker_id}", response_model=CaretakerAssignmentRead, status_code=status.HTTP_201_CREATED)
+async def assign_caretaker_to_building(
+    building_id: str,
+    caretaker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord),
+) -> CaretakerBuildingAssignment:
+    await _get_accessible_property(db, building_id, current_user)
+    await _assert_caretaker_exists(db, caretaker_id)
+    existing = await db.scalar(
+        select(CaretakerBuildingAssignment).where(
+            CaretakerBuildingAssignment.caretaker_id == caretaker_id,
+            CaretakerBuildingAssignment.building_id == building_id,
+        )
+    )
+    if existing:
+        return existing
+    assignment = CaretakerBuildingAssignment(caretaker_id=caretaker_id, building_id=building_id)
+    db.add(assignment)
+    await db.flush()
+    await db.refresh(assignment)
+    return assignment
+
+
+@router.delete("/buildings/{building_id}/caretakers/{caretaker_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unassign_caretaker_from_building(
+    building_id: str,
+    caretaker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord),
+) -> None:
+    await _get_accessible_property(db, building_id, current_user)
+    assignment = await db.scalar(
+        select(CaretakerBuildingAssignment).where(
+            CaretakerBuildingAssignment.caretaker_id == caretaker_id,
+            CaretakerBuildingAssignment.building_id == building_id,
+        )
+    )
+    if assignment:
+        await db.delete(assignment)
+
+
+@router.post("/apartments/{apartment_id}/caretakers/{caretaker_id}", response_model=CaretakerAssignmentRead, status_code=status.HTTP_201_CREATED)
+async def assign_caretaker_to_apartment(
+    apartment_id: str,
+    caretaker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord),
+) -> CaretakerApartmentAssignment:
+    apartment = await _assert_unit_access(db, apartment_id, current_user)
+    await _assert_caretaker_exists(db, caretaker_id)
+    existing = await db.scalar(
+        select(CaretakerApartmentAssignment).where(
+            CaretakerApartmentAssignment.caretaker_id == caretaker_id,
+            CaretakerApartmentAssignment.apartment_id == apartment.id,
+        )
+    )
+    if existing:
+        return existing
+    assignment = CaretakerApartmentAssignment(caretaker_id=caretaker_id, apartment_id=apartment.id)
+    db.add(assignment)
+    await db.flush()
+    await db.refresh(assignment)
+    return assignment
+
+
+@router.delete("/apartments/{apartment_id}/caretakers/{caretaker_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unassign_caretaker_from_apartment(
+    apartment_id: str,
+    caretaker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_landlord),
+) -> None:
+    await _assert_unit_access(db, apartment_id, current_user)
+    assignment = await db.scalar(
+        select(CaretakerApartmentAssignment).where(
+            CaretakerApartmentAssignment.caretaker_id == caretaker_id,
+            CaretakerApartmentAssignment.apartment_id == apartment_id,
+        )
+    )
+    if assignment:
+        await db.delete(assignment)
+
+
 # ---------------------------------------------------------------------------
 # Properties (Immobilien)
 # ---------------------------------------------------------------------------
@@ -51,11 +211,9 @@ router = APIRouter(prefix="/landlord", tags=["landlord"])
 @router.get("/properties", response_model=list[PropertyRead])
 async def list_properties(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[Property]:
-    result = await db.execute(
-        select(Property).where(Property.landlord_id == current_user.id)
-    )
+    result = await db.execute(_property_visibility_stmt(current_user))
     return list(result.scalars().all())
 
 
@@ -63,8 +221,9 @@ async def list_properties(
 async def create_property(
     payload: PropertyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Property:
+    _ensure_landlord_or_admin(current_user)
     prop = Property(**payload.model_dump(), landlord_id=current_user.id)
     db.add(prop)
     await db.flush()
@@ -76,9 +235,9 @@ async def create_property(
 async def get_property(
     property_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Property:
-    prop = await _get_owned_property(db, property_id, current_user.id)
+    prop = await _get_accessible_property(db, property_id, current_user)
     return prop
 
 
@@ -87,9 +246,10 @@ async def update_property(
     property_id: str,
     payload: PropertyUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Property:
-    prop = await _get_owned_property(db, property_id, current_user.id)
+    _ensure_landlord_or_admin(current_user)
+    prop = await _get_accessible_property(db, property_id, current_user)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(prop, field, value)
     await db.flush()
@@ -101,9 +261,10 @@ async def update_property(
 async def delete_property(
     property_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> None:
-    prop = await _get_owned_property(db, property_id, current_user.id)
+    _ensure_landlord_or_admin(current_user)
+    prop = await _get_accessible_property(db, property_id, current_user)
     await db.delete(prop)
 
 
@@ -116,10 +277,10 @@ async def delete_property(
 async def list_units(
     property_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[Unit]:
-    await _get_owned_property(db, property_id, current_user.id)
-    result = await db.execute(select(Unit).where(Unit.property_id == property_id))
+    await _get_accessible_property(db, property_id, current_user)
+    result = await db.execute(select(Unit).where(Unit.property_id == property_id).order_by(Unit.name))
     return list(result.scalars().all())
 
 
@@ -128,9 +289,10 @@ async def create_unit(
     property_id: str,
     payload: UnitCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Unit:
-    await _get_owned_property(db, property_id, current_user.id)
+    _ensure_landlord_or_admin(current_user)
+    await _get_accessible_property(db, property_id, current_user)
     unit = Unit(**payload.model_dump(), property_id=property_id)
     db.add(unit)
     await db.flush()
@@ -144,9 +306,10 @@ async def update_unit(
     unit_id: str,
     payload: UnitUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Unit:
-    unit = await _get_owned_unit(db, unit_id, property_id, current_user.id)
+    _ensure_landlord_or_admin(current_user)
+    unit = await _get_accessible_unit(db, unit_id, property_id, current_user)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(unit, field, value)
     await db.flush()
@@ -159,9 +322,10 @@ async def delete_unit(
     property_id: str,
     unit_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> None:
-    unit = await _get_owned_unit(db, unit_id, property_id, current_user.id)
+    _ensure_landlord_or_admin(current_user)
+    unit = await _get_accessible_unit(db, unit_id, property_id, current_user)
     await db.delete(unit)
 
 
@@ -175,9 +339,9 @@ async def create_meter(
     unit_id: str,
     payload: MeterCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Meter:
-    await _assert_unit_ownership(db, unit_id, current_user.id)
+    await _assert_unit_access(db, unit_id, current_user)
     meter = Meter(**payload.model_dump(), unit_id=unit_id)
     db.add(meter)
     await db.flush()
@@ -189,9 +353,9 @@ async def create_meter(
 async def list_meters(
     unit_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[Meter]:
-    await _assert_unit_ownership(db, unit_id, current_user.id)
+    await _assert_unit_access(db, unit_id, current_user)
     result = await db.execute(select(Meter).where(Meter.unit_id == unit_id))
     return list(result.scalars().all())
 
@@ -201,9 +365,9 @@ async def add_reading(
     meter_id: str,
     payload: MeterReadingCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> MeterReading:
-    await _assert_meter_ownership(db, meter_id, current_user.id)
+    await _assert_meter_access(db, meter_id, current_user)
     reading = MeterReading(**payload.model_dump(), meter_id=meter_id, uploaded_by_id=current_user.id)
     db.add(reading)
     await db.flush()
@@ -215,9 +379,9 @@ async def add_reading(
 async def list_readings(
     meter_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[MeterReading]:
-    await _assert_meter_ownership(db, meter_id, current_user.id)
+    await _assert_meter_access(db, meter_id, current_user)
     result = await db.execute(
         select(MeterReading).where(MeterReading.meter_id == meter_id).order_by(MeterReading.reading_date)
     )
@@ -232,14 +396,9 @@ async def list_readings(
 @router.get("/contracts", response_model=list[ContractRead])
 async def list_contracts(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[Contract]:
-    result = await db.execute(
-        select(Contract)
-        .join(Unit, Contract.unit_id == Unit.id)
-        .join(Property, Unit.property_id == Property.id)
-        .where(Property.landlord_id == current_user.id)
-    )
+    result = await db.execute(_contract_visibility_stmt(current_user))
     return list(result.scalars().all())
 
 
@@ -247,11 +406,11 @@ async def list_contracts(
 async def create_contract(
     payload: ContractCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Contract:
-    await _assert_unit_ownership(db, payload.unit_id, current_user.id)
+    await _assert_unit_access(db, payload.unit_id, current_user)
     # Verify tenant exists
-    tenant_result = await db.execute(select(User).where(User.id == payload.tenant_id))
+    tenant_result = await db.execute(select(User).where(User.id == payload.tenant_id, User.role == UserRole.TENANT))
     if not tenant_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Tenant not found")
 
@@ -267,9 +426,9 @@ async def update_contract_status(
     contract_id: str,
     payload: ContractStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Contract:
-    contract = await _get_owned_contract(db, contract_id, current_user.id)
+    contract = await _get_accessible_contract(db, contract_id, current_user)
     _validate_contract_transition(contract.status, payload.status)
     contract.status = payload.status
     if payload.status == ContractStatus.ACTIVE:
@@ -286,9 +445,9 @@ async def update_contract(
     contract_id: str,
     payload: ContractUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> Contract:
-    contract = await _get_owned_contract(db, contract_id, current_user.id)
+    contract = await _get_accessible_contract(db, contract_id, current_user)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(contract, field, value)
     await db.flush()
@@ -304,16 +463,9 @@ async def update_contract(
 @router.get("/utility-bills", response_model=list[UtilityBillRead])
 async def list_utility_bills(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[UtilityBill]:
-    result = await db.execute(
-        select(UtilityBill)
-        .options(selectinload(UtilityBill.line_items))
-        .join(Contract, UtilityBill.contract_id == Contract.id)
-        .join(Unit, Contract.unit_id == Unit.id)
-        .join(Property, Unit.property_id == Property.id)
-        .where(Property.landlord_id == current_user.id)
-    )
+    result = await db.execute(_bill_visibility_stmt(current_user))
     return list(result.scalars().all())
 
 
@@ -322,9 +474,9 @@ async def update_bill_status(
     bill_id: str,
     payload: UtilityBillStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> UtilityBill:
-    bill = await _get_owned_bill(db, bill_id, current_user.id)
+    bill = await _get_accessible_bill(db, bill_id, current_user)
     _validate_bill_transition(bill.status, payload.status)
     bill.status = payload.status
     now = datetime.now(timezone.utc)
@@ -349,7 +501,7 @@ async def update_bill_status(
 @router.get("/tenants", response_model=list[UserRead])
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_landlord),
+    current_user: User = Depends(require_landlord_or_caretaker),
 ) -> list[User]:
     """Return all tenants that have/had a contract in any of this landlord's units."""
     result = await db.execute(
@@ -357,7 +509,7 @@ async def list_tenants(
         .join(Contract, Contract.tenant_id == User.id)
         .join(Unit, Contract.unit_id == Unit.id)
         .join(Property, Unit.property_id == Property.id)
-        .where(Property.landlord_id == current_user.id)
+        .where(_property_access_condition(current_user))
         .distinct()
     )
     return list(result.scalars().all())
@@ -368,46 +520,72 @@ async def list_tenants(
 # ---------------------------------------------------------------------------
 
 
-async def _get_owned_property(db: AsyncSession, property_id: str, landlord_id: str) -> Property:
+def _ensure_landlord_or_admin(current_user: User) -> None:
+    if current_user.role not in (UserRole.LANDLORD, UserRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Only landlord/admin can modify building structure")
+
+
+def _property_access_condition(current_user: User):
+    if current_user.role == UserRole.ADMIN:
+        return True
+    if current_user.role == UserRole.LANDLORD:
+        return Property.landlord_id == current_user.id
+
+    building_ids = select(CaretakerBuildingAssignment.building_id).where(
+        CaretakerBuildingAssignment.caretaker_id == current_user.id
+    )
+    apartment_building_ids = (
+        select(Unit.property_id)
+        .join(CaretakerApartmentAssignment, CaretakerApartmentAssignment.apartment_id == Unit.id)
+        .where(CaretakerApartmentAssignment.caretaker_id == current_user.id)
+    )
+    return or_(Property.id.in_(building_ids), Property.id.in_(apartment_building_ids))
+
+
+def _property_visibility_stmt(current_user: User):
+    return select(Property).where(_property_access_condition(current_user)).order_by(Property.name)
+
+
+async def _get_accessible_property(db: AsyncSession, property_id: str, current_user: User) -> Property:
     result = await db.execute(
-        select(Property).where(Property.id == property_id, Property.landlord_id == landlord_id)
+        select(Property).where(Property.id == property_id, _property_access_condition(current_user))
     )
     prop = result.scalar_one_or_none()
     if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+        raise HTTPException(status_code=404, detail="Building not found or access denied")
     return prop
 
 
-async def _get_owned_unit(db: AsyncSession, unit_id: str, property_id: str, landlord_id: str) -> Unit:
+async def _get_accessible_unit(db: AsyncSession, unit_id: str, property_id: str, current_user: User) -> Unit:
     result = await db.execute(
         select(Unit)
         .join(Property, Unit.property_id == Property.id)
-        .where(Unit.id == unit_id, Unit.property_id == property_id, Property.landlord_id == landlord_id)
+        .where(Unit.id == unit_id, Unit.property_id == property_id, _property_access_condition(current_user))
     )
     unit = result.scalar_one_or_none()
     if not unit:
-        raise HTTPException(status_code=404, detail="Unit not found")
+        raise HTTPException(status_code=404, detail="Apartment not found or access denied")
     return unit
 
 
-async def _assert_unit_ownership(db: AsyncSession, unit_id: str, landlord_id: str) -> Unit:
+async def _assert_unit_access(db: AsyncSession, unit_id: str, current_user: User) -> Unit:
     result = await db.execute(
         select(Unit)
         .join(Property, Unit.property_id == Property.id)
-        .where(Unit.id == unit_id, Property.landlord_id == landlord_id)
+        .where(Unit.id == unit_id, _property_access_condition(current_user))
     )
     unit = result.scalar_one_or_none()
     if not unit:
-        raise HTTPException(status_code=404, detail="Unit not found or access denied")
+        raise HTTPException(status_code=404, detail="Apartment not found or access denied")
     return unit
 
 
-async def _assert_meter_ownership(db: AsyncSession, meter_id: str, landlord_id: str) -> Meter:
+async def _assert_meter_access(db: AsyncSession, meter_id: str, current_user: User) -> Meter:
     result = await db.execute(
         select(Meter)
         .join(Unit, Meter.unit_id == Unit.id)
         .join(Property, Unit.property_id == Property.id)
-        .where(Meter.id == meter_id, Property.landlord_id == landlord_id)
+        .where(Meter.id == meter_id, _property_access_condition(current_user))
     )
     meter = result.scalar_one_or_none()
     if not meter:
@@ -415,31 +593,49 @@ async def _assert_meter_ownership(db: AsyncSession, meter_id: str, landlord_id: 
     return meter
 
 
-async def _get_owned_contract(db: AsyncSession, contract_id: str, landlord_id: str) -> Contract:
-    result = await db.execute(
+def _contract_visibility_stmt(current_user: User):
+    return (
         select(Contract)
         .join(Unit, Contract.unit_id == Unit.id)
         .join(Property, Unit.property_id == Property.id)
-        .where(Contract.id == contract_id, Property.landlord_id == landlord_id)
+        .where(_property_access_condition(current_user))
     )
+
+
+async def _get_accessible_contract(db: AsyncSession, contract_id: str, current_user: User) -> Contract:
+    result = await db.execute(_contract_visibility_stmt(current_user).where(Contract.id == contract_id))
     contract = result.scalar_one_or_none()
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found or access denied")
     return contract
 
 
-async def _get_owned_bill(db: AsyncSession, bill_id: str, landlord_id: str) -> UtilityBill:
-    result = await db.execute(
+def _bill_visibility_stmt(current_user: User):
+    return (
         select(UtilityBill)
+        .options(selectinload(UtilityBill.line_items))
         .join(Contract, UtilityBill.contract_id == Contract.id)
         .join(Unit, Contract.unit_id == Unit.id)
         .join(Property, Unit.property_id == Property.id)
-        .where(UtilityBill.id == bill_id, Property.landlord_id == landlord_id)
+        .where(_property_access_condition(current_user))
     )
+
+
+async def _get_accessible_bill(db: AsyncSession, bill_id: str, current_user: User) -> UtilityBill:
+    result = await db.execute(_bill_visibility_stmt(current_user).where(UtilityBill.id == bill_id))
     bill = result.scalar_one_or_none()
     if not bill:
         raise HTTPException(status_code=404, detail="Utility bill not found or access denied")
     return bill
+
+
+async def _assert_caretaker_exists(db: AsyncSession, caretaker_id: str) -> User:
+    caretaker = await db.scalar(
+        select(User).where(User.id == caretaker_id, User.role == UserRole.CARETAKER, User.is_active == True)  # noqa: E712
+    )
+    if caretaker is None:
+        raise HTTPException(status_code=404, detail="Caretaker not found")
+    return caretaker
 
 
 _CONTRACT_TRANSITIONS: dict[ContractStatus, set[ContractStatus]] = {

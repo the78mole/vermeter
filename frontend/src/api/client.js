@@ -40,6 +40,31 @@ export default api
 // --- Auth ---
 export const getMe = () => api.get('/auth/me')
 
+// --- Admin ---
+export const getAdminStats = () => api.get('/admin/stats')
+export const getLandlords = () => api.get('/admin/landlords')
+export const createLandlord = (data) => api.post('/admin/landlords', data)
+export const updateLandlord = (id, data) => api.patch(`/admin/landlords/${id}`, data)
+export const deactivateLandlord = (id) => api.delete(`/admin/landlords/${id}`)
+export const getLandlordProfile = (id) => api.get(`/admin/landlords/${id}/profile`)
+export const upsertLandlordProfile = (id, data) => api.put(`/admin/landlords/${id}/profile`, data)
+export const listDocuments = (id) => api.get(`/admin/landlords/${id}/documents`)
+export const uploadDocument = (id, file, description, tags = []) => {
+  const form = new FormData()
+  form.append('file', file)
+  const params = new URLSearchParams()
+  if (description) params.append('description', description)
+  tags.forEach((t) => params.append('tags', t))
+  return api.post(`/admin/landlords/${id}/documents?${params.toString()}`, form)
+}
+export const searchTags = (q = '') => api.get('/admin/tags', { params: { q } })
+export const downloadDocumentUrl = (landlordId, docId) =>
+  `${import.meta.env.VITE_API_BASE_URL || '/api/v1'}/admin/landlords/${landlordId}/documents/${docId}/download`
+export const updateDocument = (landlordId, docId, data) =>
+  api.patch(`/admin/landlords/${landlordId}/documents/${docId}`, data)
+export const deleteDocument = (landlordId, docId) =>
+  api.delete(`/admin/landlords/${landlordId}/documents/${docId}`)
+
 // --- Landlord ---
 export const getProperties = () => api.get('/landlord/properties')
 export const createProperty = (data) => api.post('/landlord/properties', data)
@@ -68,3 +93,10 @@ export const myMeters = () => api.get('/tenant/meters')
 export const myMeterReadings = (meterId) => api.get(`/tenant/meters/${meterId}/readings`)
 export const myInterpolatedReadings = (meterId) => api.get(`/tenant/meters/${meterId}/interpolated`)
 export const submitMeterReading = (meterId, data) => api.post(`/tenant/meters/${meterId}/readings`, data)
+
+// --- Admin Users ---
+export const listAdminUsers = () => api.get('/admin-users')
+export const createAdminUser = (data) => api.post('/admin-users', data)
+export const getAdminUser = (id) => api.get(`/admin-users/${id}`)
+export const updateAdminUser = (id, data) => api.patch(`/admin-users/${id}`, data)
+export const deleteAdminUser = (id) => api.delete(`/admin-users/${id}`)
