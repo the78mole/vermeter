@@ -1,0 +1,5 @@
+.env
+.venv/
+docs/node_modules/
+docs/.vitepress/
+!docs/.vitepress/config.js

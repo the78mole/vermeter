@@ -1,0 +1,5 @@
+# This file is intentionally left as a placeholder.
+# The docs site is built with VitePress, not Jekyll.
+# See docs/.vitepress/config.js for the site configuration.
+# Build: cd docs && npm ci && npm run build
+# Output: docs/.vitepress/dist

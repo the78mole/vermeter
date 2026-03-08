@@ -1,0 +1,111 @@
+{
+  // ────────────────────────────────────────────────────────────────────────────
+  // Rental Manager – Dev Container
+  //
+  // Works for both:
+  //   • Local VS Code (Dev Containers extension)
+  //   • GitHub Codespaces
+  //
+  // Architecture:
+  //   • Infrastructure (Postgres, Redis, Keycloak) runs via Docker-outside-of-Docker
+  //     (shares the host Docker socket – no nested daemon required).
+  //   • FastAPI backend  → uvicorn --reload on port 8000 (hot-reload ✓)
+  //   • React frontend   → Vite dev server  on port 3000 (hot-reload ✓)
+  //
+  // Manual start required:
+  //   • docker compose -f docker/docker-compose.dev.yml up -d
+  //   • See postStart.sh output for full instructions.
+  // ────────────────────────────────────────────────────────────────────────────
+  "name": "Rental Manager",
+
+  // Lean Ubuntu 24.04 base – avoids the pre-configured Yarn apt repo in
+  // "universal:2" whose GPG key (62D54FD4003F6525) has expired and breaks
+  // the docker-outside-of-docker feature install.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  // Features install Python 3.12, Node 22 and wire up the host Docker socket.
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils": {
+      "installZsh": true,
+      "ohMyZsh": true,
+      "zshAutosuggestions": true,
+      "zshSyntaxHighlighting": true,
+      "configureZshAsDefaultShell": true,
+      "username": "vscode",
+      "userUid": "automatic",
+      "userGid": "automatic"
+    },
+    "ghcr.io/the78mole/devcontainer-features/uv": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "toolsToInstall": "flake8,autopep8,black,yapf,mypy,pydocstyle,pycodestyle,bandit,pipenv,virtualenv,pytest,pylint,ruff,pre-commit",
+    },
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "moby": false,
+      "installDockerBuildx": true,
+      "dockerDashComposeVersion": "v2"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "extensions": "the78mole/gh-moles"
+    }
+  },
+
+  // Pin DOCKER_API_VERSION to the host daemon's max supported API.
+  // Without this, a newer Docker CLI (e.g. 1.52) is rejected by an older
+  // daemon (e.g. Engine 23.x, API 1.43) with "client version too new".
+  "remoteEnv": {
+    "DOCKER_API_VERSION": "1.50",
+    "PAGER": "cat"
+  },
+
+  // ── Port forwarding ─────────────────────────────────────────────────────────
+  "forwardPorts": [80],
+
+  "portsAttributes": {
+    "80": {
+      // Must be public so the browser can complete OIDC redirects (Keycloak is
+      // now served at /auth via Caddy – no separate port needed).
+      "label": "App (Caddy – Frontend + API + Keycloak)",
+      "onAutoForward": "openBrowserOnce",
+      "visibility": "public"
+    }
+  },
+
+  // ── Lifecycle scripts ────────────────────────────────────────────────────────
+  // postCreateCommand runs once after the container is first created.
+  "postCreateCommand": "bash .devcontainer/scripts/postCreate.sh",
+
+  // postStartCommand runs every time the container starts (incl. Codespace resume).
+  "postStartCommand": "bash .devcontainer/scripts/postStart.sh",
+
+  "remoteUser": "vscode",
+  
+  // ── VS Code / Codespaces customisations ──────────────────────────────────────
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "ms-azuretools.vscode-docker",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        "humao.rest-client",
+        "ms-azuretools.vscode-containers",
+        "bierner.markdown-mermaid"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python"
+        },
+        "[javascript][javascriptreact][typescript][typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+}

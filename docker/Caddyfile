@@ -1,0 +1,68 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Rental Manager – Caddyfile
+#
+# Single entrypoint on port 80:
+#   /auth/*     → Keycloak       (keycloak:8080)
+#   /api/*      → FastAPI backend (api:8000)
+#   /uploads/*  → FastAPI uploads (api:8000)
+#   /*          → React SPA       (web:80)
+# ──────────────────────────────────────────────────────────────────────────────
+{
+    auto_https off
+    admin off
+    # Trust all upstream proxies so {scheme} correctly reflects the client-facing
+    # protocol (https in GitHub Codespaces) rather than the internal HTTP connection.
+    # NOTE: this is a development-only setting; restrict to specific CIDRs in production.
+    servers {
+        trusted_proxies static 0.0.0.0/0
+    }
+}
+
+:80 {
+    # Keycloak OIDC + Admin UI
+    handle /auth/* {
+        reverse_proxy keycloak:8080 {
+            # Do NOT set X-Forwarded-Proto explicitly.
+            # With trusted_proxies 0.0.0.0/0, Caddy preserves the incoming
+            # X-Forwarded-Proto: https set by the Codespaces upstream proxy.
+            # For direct HTTP access (local dev), Caddy auto-sets it to "http".
+            # Explicitly setting via {scheme} would overwrite "https" with "http"
+            # because {scheme} reflects the local HTTP connection to Caddy, not
+            # the browser-facing HTTPS used by the Codespaces proxy.
+            #
+            # Remove X-Forwarded-Port: Keycloak appends it to every URL, producing
+            # http://localhost:443 redirects when Codespaces proxies on port 443.
+            header_up -X-Forwarded-Port
+        }
+    }
+
+    # Public landing page (no auth required)
+    # The `templates` directive enables Go-template processing so that
+    # {{if eq (env "SHOW_DEMO_CREDENTIALS") "true"}} blocks work.
+    handle /landing {
+        root * /srv
+        rewrite * /landing.html
+        templates
+        file_server
+    }
+
+    # RustFS Web Console
+    handle /rustfs/* {
+        uri strip_prefix /rustfs
+        reverse_proxy rustfs:9001
+    }
+
+    # Backend API and file uploads
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle /uploads/* {
+        reverse_proxy api:8000
+    }
+
+    # React SPA (everything else)
+    handle {
+        reverse_proxy web:80
+    }
+}
